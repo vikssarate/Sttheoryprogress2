@@ -116,9 +116,9 @@ function loadLS(){ try{ return JSON.parse(localStorage.getItem(LSK)); }catch(e){
 function saveLS(obj){ localStorage.setItem(LSK, JSON.stringify(obj)); }
 
 /* =================== PouchDB/CouchDB wiring (AUTO SYNC) =================== */
-const POUCH_LOCAL_NAME = "vivek_local_v1";
+const POUCH_LOCAL_NAME = "sttheoryprogress1_local_v1";
 const POUCH_DOC_ID     = "exams_state_v1";            // canonical state doc id
-const REMOTE_URL       = "https://couch.techstudy.me/vivek";
+const REMOTE_URL       = "https://couch.techstudy.me/sttheoryprogress1";
 
 const pdbLocal  = new PouchDB(POUCH_LOCAL_NAME);
 const pdbRemote = new PouchDB(REMOTE_URL, { skip_setup:true });
