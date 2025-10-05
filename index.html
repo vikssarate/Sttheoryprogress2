@@ -1,0 +1,1071 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
+<title>Exam → Subjects → Topics → Chunks — Progress Tracker</title>
+<style>
+:root{
+  --bg:#0f1220;--card:#181c2f;--ink:#eef1ff;--muted:#9aa3c7;--line:#2a3052;
+  --ok:#7bd88f;--warn:#ffd166;--bad:#ff7575;--accent:#6ca8ff
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Helvetica Neue",Arial;-webkit-tap-highlight-color:transparent}
+header,footer{padding:12px 16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;border-bottom:1px solid var(--line)}
+header h1{margin:0;font-size:18px;font-weight:700}
+.wrap{max-width:1100px;margin:0 auto;padding:16px}
+.toolbar{display:flex;flex-wrap:wrap;gap:8px}
+button,.btn{background:var(--card);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:10px 12px;font:inherit;cursor:pointer}
+button:hover{box-shadow:0 0 0 1px var(--accent)}
+input,textarea,select{background:transparent;border:1px solid var(--line);color:var(--ink);border-radius:10px;padding:9px 10px;font:inherit}
+input[type="number"]{width:120px}
+select{min-width:190px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin:14px 0}
+.card h2{margin:0 0 8px 0;font-size:16px;display:flex;align-items:center;gap:8px}
+.small{font-size:12px;color:var(--muted)}
+.row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.split{display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap}
+.bar{position:relative;height:14px;background:#10152b;border:1px solid var(--line);border-radius:999px;overflow:hidden;min-width:200px}
+.fill{position:absolute;inset:0 0 0 0;width:0%;background:linear-gradient(90deg,var(--accent),#82b6ff)}
+.topic{border:1px dashed var(--line);border-radius:12px;padding:10px;margin-top:10px}
+.topic h3{margin:0 0 8px 0;font-size:14px;display:flex;align-items:center;gap:8px}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{border:1px solid var(--line);border-radius:10px;padding:6px 9px;cursor:pointer;user-select:none}
+.chip.done{background:rgba(123,216,143,.15);border-color:var(--ok)}
+.badge{border:1px solid var(--line);border-radius:999px;padding:2px 8px;font-size:11px;color:var(--muted)}
+hr.sep{border:none;border-top:1px solid var(--line);margin:10px 0}
+details{border:1px solid var(--line);border-radius:12px;padding:8px;background:rgba(255,255,255,0.02)}
+details summary{cursor:pointer;font-weight:600}
+a.link{color:var(--accent);text-decoration:none}
+input.inline{border:none;border-bottom:1px dashed var(--line);border-radius:0;padding:2px 6px}
+.warning{color:var(--warn)}
+.ok{color:var(--ok)}
+.danger{color:var(--bad)}
+.toggle{width:34px;height:34px;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;font-weight:700}
+.pctLabel{font-weight:700}
+
+/* Global/Exam header */
+.hero{display:flex;flex-direction:column;gap:10px}
+.heroTop{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.hero .bar{min-width:260px;height:16px}
+.hero .pct{font-weight:800}
+.examRow{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+
+/* Tabs */
+.tabs{display:flex;gap:8px;margin:6px 0 0 0;border-bottom:1px solid var(--line)}
+.tabs button{background:transparent;border:1px solid var(--line);border-bottom:none;padding:8px 12px;border-top-left-radius:10px;border-top-right-radius:10px}
+.tabs button.active{background:var(--card);box-shadow:0 -2px 0 var(--accent) inset;font-weight:700}
+
+/* PDF viewer */
+.pdfWrap{margin-top:10px}
+.pdfWrap iframe{width:100%;height:70vh;border:1px solid var(--line);border-radius:12px;background:#fff}
+.pastList{display:flex;flex-direction:column;gap:10px;margin-top:8px}
+.pastItem, .noteItem{display:flex;flex-direction:column;gap:6px;border:1px dashed var(--line);border-radius:10px;padding:8px}
+.pastHead, .noteHead{display:flex;align-items:center;gap:8px;justify-content:space-between;flex-wrap:wrap}
+
+@media (max-width:520px){
+  .bar{min-width:160px}
+  .hero .bar{min-width:180px}
+  .pdfWrap iframe{height:65vh}
+}
+</style>
+<!-- PouchDB for sync -->
+<script src="https://cdn.jsdelivr.net/npm/pouchdb@8.0.1/dist/pouchdb.min.js"></script>
+</head>
+<body>
+<header>
+  <h1>📚 Exam → Subjects → Topics → Chunks</h1>
+  <div class="toolbar">
+    <button id="exportBtn">⬇️ Export</button>
+    <label class="btn" for="importInp">⬆️ Import</label>
+    <input id="importInp" type="file" accept="application/json" style="display:none">
+    <button id="demoBtn" class="small">Load Demo</button>
+    <span id="savedBadge" class="badge">Saved</span>
+  </div>
+</header>
+
+<!-- Current exam header & progress + tabs -->
+<div class="wrap" id="examMount"></div>
+
+<!-- Exams overview -->
+<div class="wrap" id="overviewMount"></div>
+
+<!-- Main area -->
+<div class="wrap" id="mount"></div>
+
+<footer style="border-top:1px solid var(--line)">
+  <div class="wrap small">
+    Tips: Tap a chunk to toggle ✓. Change a topic’s chunk count via “Edit”.
+    Percent = completed chunks ÷ total chunks × 100. All data stays in your browser.
+  </div>
+</footer>
+
+<script>
+/* =================== tiny DOM helpers =================== */
+const $ = s => document.querySelector(s);
+const mount = $("#mount");
+const examMount = $("#examMount");
+const overviewMount = $("#overviewMount");
+const savedBadge = $("#savedBadge");
+
+/* =================== localStorage (unchanged) =================== */
+const LSK = "subject_topic_chunk_progress_v1"; // unchanged storage key
+function uid(){ return Math.random().toString(36).slice(2) + Date.now().toString(36); }
+function loadLS(){ try{ return JSON.parse(localStorage.getItem(LSK)); }catch(e){ return null; } }
+function saveLS(obj){ localStorage.setItem(LSK, JSON.stringify(obj)); }
+
+/* =================== NEW: PouchDB/CouchDB wiring =================== */
+const POUCH_LOCAL_NAME = "sttheoryprogress1_local_v1";
+const POUCH_DOC_ID     = "exams_state_v1";            // single state doc
+const REMOTE_URL       = "https://couch.techstudy.me/sttheoryprogress1";
+
+const pdbLocal  = new PouchDB(POUCH_LOCAL_NAME);
+const pdbRemote = new PouchDB(REMOTE_URL, { skip_setup:true });
+
+let pouchRev = null;                // latest _rev of our state doc
+let hasPulledOnce = false;
+let liveSync = null;
+let pushInFlight = false, pushQueued = false;
+let isApplyingRemote = false;       // avoid loops when we apply remote→local
+
+async function loadFromPouch(){
+  try{
+    const doc = await pdbLocal.get(POUCH_DOC_ID);
+    pouchRev = doc._rev;
+    return doc.state || null;
+  }catch(e){
+    if(e.status===404) return null;
+    throw e;
+  }
+}
+
+async function putStateToPouch(newState){
+  // conflict-safe put with retries
+  for(let i=0;i<4;i++){
+    try{
+      let base = {};
+      try{ base = await pdbLocal.get(POUCH_DOC_ID); }
+      catch(e){ if(e.status!==404) throw e; }
+      const doc = {
+        _id: POUCH_DOC_ID,
+        _rev: base._rev,
+        type: "appState",
+        updatedAt: Date.now(),
+        state: newState
+      };
+      const res = await pdbLocal.put(doc);
+      pouchRev = res.rev;
+      return res;
+    }catch(err){
+      if(err.status===409) continue; // retry with latest
+      throw err;
+    }
+  }
+  throw new Error("conflict loop on putStateToPouch");
+}
+
+async function triggerPush(reason){
+  if(pushInFlight){ pushQueued = true; return; }
+  pushInFlight = true;
+  try{
+    await pdbLocal.replicate.to(pdbRemote, { batch_size:200 });
+  }catch(e){
+    // swallow; next online will retry
+  }finally{
+    pushInFlight = false;
+    if(pushQueued){ pushQueued = false; triggerPush("queued"); }
+  }
+}
+
+async function triggerPull(reason){
+  await PouchDB.replicate(pdbRemote, pdbLocal, { batch_size:200 });
+  hasPulledOnce = true;
+}
+
+/* Live sync (kept silent; UI unchanged) */
+function startLive(){
+  if(liveSync) return;
+  liveSync = pdbLocal.sync(pdbRemote, { live:true, retry:true })
+    .on("error", ()=>{/*noop*/});
+}
+function stopLive(){ if(liveSync){ liveSync.cancel(); liveSync=null; } }
+
+/* Apply remote changes immediately to in-memory state + localStorage */
+pdbLocal.changes({ since:"now", live:true, include_docs:true, doc_ids:[POUCH_DOC_ID] })
+  .on("change", ch=>{
+    if(!ch.doc) return;
+    // If we are the writer, still reflect the state (safe).
+    isApplyingRemote = true;
+    try{
+      const remoteState = ch.doc.state || {};
+      state = remoteState;
+      saveLS(state);
+      savedPulse();
+      render();
+    }finally{
+      isApplyingRemote = false;
+    }
+  });
+
+/* =================== app state (unchanged APIs) =================== */
+let state = loadLS() ?? {};
+let saveTimer;
+
+/* ---------- persistence (UPDATED to also sync PouchDB) ---------- */
+function savedPulse(){
+  savedBadge.textContent="Saved";
+  savedBadge.style.opacity=1;
+  clearTimeout(saveTimer);
+  saveTimer=setTimeout(()=>{ savedBadge.style.opacity=.4; },1200);
+}
+function save(){
+  // 1) localStorage (unchanged)
+  saveLS(state);
+  savedPulse();
+
+  // 2) PouchDB (instant push)
+  putStateToPouch(state)
+    .then(()=> { if(hasPulledOnce || liveSync) triggerPush("local-change"); })
+    .catch(()=>{/* ignore; next edit/online will retry */});
+}
+function dirty(fn){
+  if(fn) fn();
+  save();
+  render();
+}
+
+/* ---------- migration & normalization (unchanged) ---------- */
+function normalize(){
+  if(state.exams && Array.isArray(state.exams)){
+    state.exams.forEach(ex=>{
+      if(typeof ex.name!=="string") ex.name = "Untitled Exam";
+      if(!Array.isArray(ex.subjects)) ex.subjects = [];
+      if(typeof ex.syllabusUrl!=="string") ex.syllabusUrl = "";
+
+      if(!ex.notifications) ex.notifications = { currentUrl:"", pastUrls:[] };
+      if(typeof ex.notifications.currentUrl!=="string") ex.notifications.currentUrl = "";
+      if(!Array.isArray(ex.notifications.pastUrls)) ex.notifications.pastUrls = [];
+
+      if(!ex.cutoff) ex.cutoff = { currentUrl:"", pastUrls:[] };
+      if(typeof ex.cutoff.currentUrl!=="string") ex.cutoff.currentUrl = "";
+      if(!Array.isArray(ex.cutoff.pastUrls)) ex.cutoff.pastUrls = [];
+
+      if(!ex.selection) ex.selection = { required:null, total:null };
+
+      if(typeof ex.responseUrl!=="string") ex.responseUrl = "";
+
+      if(!ex.questionPapers) ex.questionPapers = { currentUrl:"", pastUrls:[] };
+      if(typeof ex.questionPapers.currentUrl!=="string") ex.questionPapers.currentUrl = "";
+      if(!Array.isArray(ex.questionPapers.pastUrls)) ex.questionPapers.pastUrls = [];
+
+      ex.subjects.forEach(s=>{
+        if(typeof s.collapsed!=="boolean") s.collapsed=false;
+        (s.topics||[]).forEach(t=>{
+          if (Array.isArray(t.notes) === false) t.notes = [];
+          if (typeof t.noteUrl === "string" && t.noteUrl.trim()){
+            t.notes.unshift({ id: uid(), title: "Notes", url: t.noteUrl.trim() });
+            t.noteUrl = "";
+          }
+          t.notes = (t.notes||[]).map(n=>({ id: n.id||uid(), title: String(n.title||"Untitled"), url: String(n.url||"") }));
+        });
+      });
+    });
+    if(!state.currentExamId){ state.currentExamId = state.exams[0]?.id || null; }
+    if(!state.ui) state.ui = { tab:"subjects" };
+    if(!state.ui.tab) state.ui.tab = "subjects";
+    return;
+  }
+  if(state.subjects){
+    const examId = uid();
+    const name = state.exam?.name || "Untitled Exam";
+    state = {
+      exams: [{
+        id: examId, name,
+        syllabusUrl:"",
+        notifications:{currentUrl:"", pastUrls:[]},
+        cutoff:{currentUrl:"", pastUrls:[]},
+        selection:{ required:null, total:null },
+        responseUrl:"",
+        questionPapers:{ currentUrl:"", pastUrls:[] },
+        subjects: state.subjects
+      }],
+      currentExamId: examId,
+      ui: { tab:"subjects" }
+    };
+    return;
+  }
+  const id = uid();
+  state = { exams:[{ id, name:"Untitled Exam", syllabusUrl:"", notifications:{currentUrl:"",pastUrls:[]}, cutoff:{currentUrl:"",pastUrls:[]}, selection:{required:null,total:null}, responseUrl:"", questionPapers:{currentUrl:"",pastUrls:[]}, subjects:[] }], currentExamId:id, ui:{tab:"subjects"} };
+}
+function currentExam(){ return state.exams.find(e=>e.id===state.currentExamId) || state.exams[0]; }
+
+/* ---------- stats (unchanged) ---------- */
+function topicStats(t){ const done=t.completed.filter(Boolean).length, pct=Math.round((done/t.chunks)*100); return {done,pct,allDone:done===t.chunks}; }
+function subjectStats(s){
+  let totalChunks=0,totalDone=0,topicAll=0;
+  for(const t of s.topics){ const st=topicStats(t); totalChunks+=t.chunks; totalDone+=st.done; if(st.allDone) topicAll++; }
+  const pct = totalChunks ? Math.round((totalDone/totalChunks)*100) : 0;
+  return { totalChunks,totalDone,pct,topicAll,allDone:s.topics.length>0&&topicAll===s.topics.length };
+}
+function examStats(exam){
+  let totalChunks=0,totalDone=0,subjectsAll=0;
+  for(const s of exam.subjects){ const st=subjectStats(s); totalChunks+=st.totalChunks; totalDone+=st.totalDone; if(st.allDone) subjectsAll++; }
+  const pct = totalChunks ? Math.round((totalDone/totalChunks)*100) : 0;
+  return { totalChunks,totalDone,pct,subjectsAll,subjectCount:exam.subjects.length };
+}
+
+/* ---------- CRUD (unchanged) ---------- */
+function addExam(name){ const id=uid(); state.exams.push({ id, name:name||"New Exam", syllabusUrl:"", notifications:{currentUrl:"", pastUrls:[]}, cutoff:{ currentUrl:"", pastUrls:[]}, selection:{ required:null, total:null }, responseUrl:"", questionPapers:{ currentUrl:"", pastUrls:[] }, subjects:[] }); state.currentExamId=id; }
+function renameExam(id,newName){ const ex=state.exams.find(e=>e.id===id); if(!ex) return; ex.name=newName||"Untitled Exam"; }
+function removeExam(id){
+  const i=state.exams.findIndex(e=>e.id===id); if(i<0) return;
+  state.exams.splice(i,1);
+  if(state.exams.length===0){
+    const idNew=uid();
+    state.exams.push({ id:idNew, name:"Untitled Exam", syllabusUrl:"", notifications:{currentUrl:"",pastUrls:[]}, cutoff:{currentUrl:"",pastUrls:[]}, selection:{required:null,total:null}, responseUrl:"", questionPapers:{currentUrl:"",pastUrls:[]}, subjects:[] });
+    state.currentExamId=idNew;
+  }else if(state.currentExamId===id){ state.currentExamId=state.exams[0].id; }
+}
+function setCurrentExam(id){ state.currentExamId=id; }
+
+function addSubject(name){ const ex=currentExam(); if(!ex) return; ex.subjects.push({ id:uid(), name:name||"Untitled", topics:[], collapsed:false }); }
+function removeSubject(id){ const ex=currentExam(); if(!ex) return; const i=ex.subjects.findIndex(s=>s.id===id); if(i>=0) ex.subjects.splice(i,1); }
+function renameSubject(id,name){ const ex=currentExam(); if(!ex) return; const s=ex.subjects.find(s=>s.id===id); if(!s) return; s.name=name||"Untitled"; }
+function toggleSubject(id){ const ex=currentExam(); if(!ex) return; const s=ex.subjects.find(s=>s.id===id); if(!s) return; s.collapsed=!s.collapsed; }
+function addTopic(subjectId,name,chunks){ const ex=currentExam(); if(!ex) return; const s=ex.subjects.find(s=>s.id===subjectId); if(!s) return; chunks=Math.max(1,Math.min(500,Number(chunks||1))); s.topics.push({ id:uid(), name:name||"Untitled topic", chunks, completed:Array(chunks).fill(false), notes:[] }); }
+function removeTopic(subjectId,topicId){ const ex=currentExam(); if(!ex) return; const s=ex.subjects.find(s=>s.id===subjectId); if(!s) return; const i=s.topics.findIndex(t=>t.id===topicId); if(i>=0) s.topics.splice(i,1); }
+function editTopic(subjectId,topicId,newName,newChunks){
+  const ex=currentExam(); if(!ex) return; const s=ex.subjects.find(s=>s.id===subjectId); if(!s) return; const t=s.topics.find(t=>t.id===topicId); if(!t) return;
+  t.name=newName||t.name; const n=Math.max(1,Math.min(500,Number(newChunks||t.chunks)));
+  if(n!==t.chunks){ if(n>t.chunks){ t.completed.push(...Array(n-t.chunks).fill(false)); } else { t.completed=t.completed.slice(0,n); } t.chunks=n; }
+}
+function toggleChunk(subjectId,topicId,idx){ const ex=currentExam(); if(!ex) return; const s=ex.subjects.find(s=>s.id===subjectId); if(!s) return; const t=s.topics.find(t=>t.id===topicId); if(!t) return; t.completed[idx]=!t.completed[idx]; }
+function setAllChunks(subjectId,topicId,val){ const ex=currentExam(); if(!ex) return; const s=ex.subjects.find(s=>s.id===subjectId); if(!s) return; const t=s.topics.find(t=>t.id===topicId); if(!t) return; t.completed=Array(t.chunks).fill(!!val); }
+
+/* ---------- Notes helpers (unchanged) ---------- */
+function topicRef(subjectId, topicId){
+  const ex=currentExam(); if(!ex) return null;
+  const s=ex.subjects.find(s=>s.id===subjectId); if(!s) return null;
+  const t=s.topics.find(t=>t.id===topicId); if(!t) return null;
+  return t;
+}
+function addTopicNote(subjectId, topicId, title, url){
+  const t=topicRef(subjectId,topicId); if(!t) return;
+  if(!Array.isArray(t.notes)) t.notes=[];
+  t.notes.unshift({ id:uid(), title:title?.trim()||"Untitled", url:url?.trim()||"" });
+}
+function updateTopicNote(subjectId, topicId, noteId, title, url){
+  const t=topicRef(subjectId,topicId); if(!t) return;
+  const n=t.notes.find(n=>n.id===noteId); if(!n) return;
+  n.title = title?.trim() ?? n.title;
+  n.url   = url?.trim()   ?? n.url;
+}
+function removeTopicNote(subjectId, topicId, noteId){
+  const t=topicRef(subjectId,topicId); if(!t) return;
+  t.notes = t.notes.filter(n=>n.id!==noteId);
+}
+
+/* ---------- Drive helpers (unchanged) ---------- */
+function extractDriveId(url){
+  try{
+    const u=new URL(url);
+    if(u.hostname.includes("drive.google.com")){
+      const m=u.pathname.match(/\/file\/d\/([^/]+)/); if(m) return m[1];
+      if(u.searchParams.get("id")) return u.searchParams.get("id");
+      if(u.searchParams.get("export")==="download" && u.searchParams.get("id")) return u.searchParams.get("id");
+    }
+  }catch(e){}
+  return null;
+}
+function makePdfEmbed(url){
+  const id=extractDriveId(url);
+  if(id) return `https://drive.google.com/file/d/${id}/preview`;
+  return `https://drive.google.com/viewerng/viewer?embedded=true&url=${encodeURIComponent(url)}`;
+}
+
+/* ---------- extras (unchanged) ---------- */
+function setSyllabusUrl(url){ const ex=currentExam(); if(!ex) return; ex.syllabusUrl=url||""; }
+
+// Notifications
+function setCurrentNotif(url){ const ex=currentExam(); if(!ex) return; if(!ex.notifications) ex.notifications={currentUrl:"", pastUrls:[]}; ex.notifications.currentUrl=url||""; }
+function addPastNotif(url){ const ex=currentExam(); if(!ex) return; if(!ex.notifications) ex.notifications={currentUrl:"", pastUrls:[]}; if(url) ex.notifications.pastUrls.unshift(url); }
+function removePastNotif(idx){ const ex=currentExam(); if(!ex) return; ex.notifications.pastUrls.splice(idx,1); }
+function archiveCurrentToPast(){ const ex=currentExam(); if(!ex) return; const cur=ex.notifications.currentUrl?.trim(); if(cur){ ex.notifications.pastUrls.unshift(cur); ex.notifications.currentUrl=""; } }
+function makePastCurrent(idx){
+  const ex=currentExam(); if(!ex) return;
+  const url = ex.notifications.pastUrls[idx]; if(!url) return;
+  const cur = ex.notifications.currentUrl?.trim();
+  if(cur) ex.notifications.pastUrls.unshift(cur);
+  const j = ex.notifications.pastUrls.indexOf(url);
+  if(j>-1) ex.notifications.pastUrls.splice(j,1);
+  ex.notifications.currentUrl = url;
+}
+
+// Cutoff
+function setCurrentCutoff(url){ const ex=currentExam(); if(!ex) return; if(!ex.cutoff) ex.cutoff={currentUrl:"",pastUrls:[]}; ex.cutoff.currentUrl=url||""; }
+function addPastCutoff(url){ const ex=currentExam(); if(!ex) return; if(!ex.cutoff) ex.cutoff={currentUrl:"",pastUrls:[]}; if(url) ex.cutoff.pastUrls.unshift(url); }
+function removePastCutoff(idx){ const ex=currentExam(); if(!ex) return; ex.cutoff.pastUrls.splice(idx,1); }
+function archiveCurrentCutoffToPast(){ const ex=currentExam(); if(!ex) return; const cur=ex.cutoff.currentUrl?.trim(); if(cur){ ex.cutoff.pastUrls.unshift(cur); ex.cutoff.currentUrl=""; } }
+function makePastCutoffCurrent(idx){
+  const ex=currentExam(); if(!ex) return; const arr=ex.cutoff.pastUrls; const url=arr[idx]; if(!url) return;
+  const cur=ex.cutoff.currentUrl?.trim(); if(cur) arr.unshift(cur);
+  const j = arr.indexOf(url); if(j>-1) arr.splice(j,1);
+  ex.cutoff.currentUrl = url;
+}
+
+// Selection
+function setSelection(required,total){
+  const ex=currentExam(); if(!ex) return;
+  ex.selection = {
+    required: (required===""||required===null)? null : Number(required),
+    total:    (total===""||total===null)? null : Number(total)
+  };
+}
+function clearSelection(){ const ex=currentExam(); if(!ex) return; ex.selection = { required:null, total:null }; }
+
+// Response sheet
+function setResponseUrl(url){ const ex=currentExam(); if(!ex) return; ex.responseUrl = url || ""; }
+
+// Question papers
+function setCurrentQP(url){ const ex=currentExam(); if(!ex) return; if(!ex.questionPapers) ex.questionPapers={currentUrl:"",pastUrls:[]}; ex.questionPapers.currentUrl = url || ""; }
+function addPastQP(url){ const ex=currentExam(); if(!ex) return; if(!ex.questionPapers) ex.questionPapers={currentUrl:"",pastUrls:[]}; if(url) ex.questionPapers.pastUrls.unshift(url); }
+function removePastQP(idx){ const ex=currentExam(); if(!ex) return; ex.questionPapers.pastUrls.splice(idx,1); }
+function archiveCurrentQPToPast(){ const ex=currentExam(); if(!ex) return; const cur=ex.questionPapers.currentUrl?.trim(); if(cur){ ex.questionPapers.pastUrls.unshift(cur); ex.questionPapers.currentUrl=""; } }
+function makePastQPCurrent(idx){
+  const ex=currentExam(); if(!ex) return;
+  const arr=ex.questionPapers.pastUrls; const url=arr[idx]; if(!url) return;
+  const cur=ex.questionPapers.currentUrl?.trim();
+  if(cur) arr.unshift(cur);
+  const j = arr.indexOf(url);
+  if(j>-1) arr.splice(j,1);
+  ex.questionPapers.currentUrl = url;
+}
+
+/* ---------- rendering (unchanged) ---------- */
+function renderExamHeader(){
+  const ex=currentExam(), st=examStats(ex);
+  const sel = `<select id="examSel" title="Switch exam">${state.exams.map(e=>`<option value="${e.id}" ${e.id===state.currentExamId?'selected':''}>${escapeHtml(e.name)}</option>`).join("")}</select>`;
+  examMount.innerHTML = `
+    <div class="card hero" aria-label="Exam header">
+      <div class="heroTop">
+        <div class="examRow">
+          <span class="small">📝 Exam:</span>
+          ${sel}
+          <input class="inline" id="examName" value="${escapeHtml(ex.name)}" placeholder="Rename current exam"/>
+          <button id="addExamBtn">➕ Add Exam</button>
+          <button id="delExamBtn" class="danger">🗑️ Delete Exam</button>
+        </div>
+        <div class="bar" title="Overall progress of current exam"><div class="fill" style="width:${st.pct}%"></div></div>
+        <span class="pct">${st.pct}% of 100%</span>
+        <span class="small">${st.totalDone}/${st.totalChunks||0} chunks • ${st.subjectsAll}/${st.subjectCount} subjects done</span>
+      </div>
+
+      <div class="tabs" role="tablist">
+        <button id="tabSubjects"  class="${state.ui.tab==='subjects'?'active':''}"      role="tab" aria-selected="${state.ui.tab==='subjects'}">Subjects</button>
+        <button id="tabSyllabus"  class="${state.ui.tab==='syllabus'?'active':''}"      role="tab" aria-selected="${state.ui.tab==='syllabus'}">Syllabus PDF</button>
+        <button id="tabNotifs"    class="${state.ui.tab==='notifications'?'active':''}" role="tab" aria-selected="${state.ui.tab==='notifications'}">Notifications PDF</button>
+        <button id="tabCutoff"    class="${state.ui.tab==='cutoff'?'active':''}"        role="tab" aria-selected="${state.ui.tab==='cutoff'}">Final Cutoff PDF</button>
+        <button id="tabSelection" class="${state.ui.tab==='selection'?'active':''}"     role="tab" aria-selected="${state.ui.tab==='selection'}">Selection Marks</button>
+        <button id="tabResponse"  class="${state.ui.tab==='response'?'active':''}"      role="tab" aria-selected="${state.ui.tab==='response'}">Response Sheet PDF</button>
+        <button id="tabQP"        class="${state.ui.tab==='qp'?'active':''}"            role="tab" aria-selected="${state.ui.tab==='qp'}">Question Papers</button>
+      </div>
+
+      <div class="row" style="margin-top:8px">
+        <button id="addSubjectBtn">➕ Add Subject</button>
+        <button id="exportBtn2">⬇️ Export</button>
+        <label class="btn" for="importInp2">⬆️ Import</label>
+        <input id="importInp2" type="file" accept="application/json" style="display:none">
+      </div>
+    </div>
+  `;
+  $("#examSel").onchange = (e)=> dirty(()=> setCurrentExam(e.target.value));
+  $("#examName").onchange = (e)=> dirty(()=> renameExam(ex.id, e.target.value.trim()||"Untitled Exam"));
+  $("#addExamBtn").onclick = ()=>{ const n=prompt("New exam name?","New Exam"); if(n===null) return; dirty(()=> addExam(n.trim()||"New Exam")); };
+  $("#delExamBtn").onclick = ()=>{ if(!confirm("Delete this exam and all its data?")) return; dirty(()=> removeExam(ex.id)); };
+  $("#addSubjectBtn").onclick = ()=>{ const name=prompt("Subject name?"); if(name===null) return; dirty(()=> addSubject((name.trim()||"Untitled"))); };
+  $("#tabSubjects").onclick  = ()=> dirty(()=> state.ui.tab="subjects");
+  $("#tabSyllabus").onclick  = ()=> dirty(()=> state.ui.tab="syllabus");
+  $("#tabNotifs").onclick    = ()=> dirty(()=> state.ui.tab="notifications");
+  $("#tabCutoff").onclick    = ()=> dirty(()=> state.ui.tab="cutoff");
+  $("#tabSelection").onclick = ()=> dirty(()=> state.ui.tab="selection");
+  $("#tabResponse").onclick  = ()=> dirty(()=> state.ui.tab="response");
+  $("#tabQP").onclick        = ()=> dirty(()=> state.ui.tab="qp");
+  $("#exportBtn2").onclick = onExport;
+  $("#importInp2").onchange = onImport;
+}
+
+function renderOverview(){
+  if(state.exams.length<=1){ overviewMount.innerHTML=""; return; }
+  const rows = state.exams.map(e=>{ const st=examStats(e);
+    return `
+      <div class="row" style="gap:10px;justify-content:space-between;align-items:center;margin:6px 0">
+        <div class="row" style="gap:8px"><span class="small">${escapeHtml(e.name)}</span><span class="badge">${st.totalDone}/${st.totalChunks||0} chunks</span></div>
+        <div class="bar"><div class="fill" style="width:${st.pct}%"></div></div>
+        <span class="pctLabel">${st.pct}%</span>
+        <button onclick="dirty(()=> setCurrentExam('${e.id}'))">Open</button>
+      </div>`;
+  }).join("");
+  overviewMount.innerHTML = `<details class="card" open><summary>🗂 All Exams Overview</summary><div style="display:flex;flex-direction:column">${rows}</div></details>`;
+}
+
+function renderSubjects(){
+  const ex=currentExam(); mount.innerHTML="";
+  if(!ex.subjects.length){
+    const empty=document.createElement("div"); empty.className="card";
+    empty.innerHTML=`<h2>No subjects yet</h2><div class="small">Use “Add Subject” above to begin.</div>`;
+    mount.appendChild(empty); return;
+  }
+  for(const s of ex.subjects){
+    if(typeof s.collapsed!=="boolean") s.collapsed=false;
+    const stat=subjectStats(s);
+    const card=document.createElement("div"); card.className="card";
+    const subjectHeader=document.createElement("div"); subjectHeader.className="split";
+    subjectHeader.innerHTML=`
+      <h2>
+        <button class="toggle" title="${s.collapsed?'Expand':'Collapse'}" onclick="onToggleSubject('${s.id}')">${s.collapsed?'▸':'▾'}</button>
+        <input class="inline" value="${escapeHtml(s.name)}" data-subject-rename="${s.id}" aria-label="Subject name"/>
+        <span class="badge">${s.topics.length} topic${s.topics.length!==1?'s':''}</span>
+        ${stat.allDone?'<span class="badge ok">✓ All topics complete</span>':''}
+      </h2>
+      <div class="row">
+        <div class="bar"><div class="fill" style="width:${stat.pct}%"></div></div>
+        <span class="pctLabel">${stat.pct}% of 100%</span>
+        <span class="small">${stat.totalDone}/${stat.totalChunks} chunks • ${stat.topicAll}/${s.topics.length} topics</span>
+        <button onclick="onAddTopic('${s.id}')">➕ Add Topic</button>
+        <button onclick="onBulkAdd('${s.id}')" title="Bulk add topics">📥 Bulk</button>
+        <button class="danger" onclick="onDeleteSubject('${s.id}')">🗑️ Delete Subject</button>
+      </div>`;
+    card.appendChild(subjectHeader);
+    if(!s.collapsed){
+      for(const t of s.topics){
+        const ts=topicStats(t);
+        const topic=document.createElement("div"); topic.className="topic";
+        topic.innerHTML=`
+          <div class="split">
+            <h3>
+              <span>${ts.allDone?'✅':'🧩'}</span>
+              <input class="inline" value="${escapeHtml(t.name)}" data-topic-rename="${s.id}::${t.id}" aria-label="Topic name"/>
+              <span class="badge">${ts.done}/${t.chunks} chunks</span>
+              <span class="badge">${ts.pct}%</span>
+            </h3>
+            <div class="row">
+              <div class="bar" style="min-width:140px"><div class="fill" style="width:${ts.pct}%"></div></div>
+              <button onclick="onEditTopic('${s.id}','${t.id}')">✏️ Edit</button>
+              <button onclick="dirty(()=>setAllChunks('${s.id}','${t.id}',true))">✔️ All</button>
+              <button onclick="dirty(()=>setAllChunks('${s.id}','${t.id}',false))">↺ Reset</button>
+              <button class="danger" onclick="onDeleteTopic('${s.id}','${t.id}')">🗑️ Delete</button>
+            </div>
+          </div>
+          <div class="chips" id="chips-${t.id}"></div>
+
+          <!-- MULTI NOTES BLOCK -->
+          <details style="margin-top:10px" open>
+            <summary><strong>🗒️ Notes PDFs</strong> <span class="small">(${t.notes?.length||0})</span></summary>
+            <div class="row" style="margin-top:8px">
+              <input id="newNoteTitle-${t.id}" placeholder="Title (e.g., Chapter summary)" style="min-width:160px;flex:1"/>
+              <input id="newNoteUrl-${t.id}" placeholder="Paste Drive link or PDF URL" style="min-width:240px;flex:2"/>
+              <button onclick="(function(){
+                const title=document.getElementById('newNoteTitle-${t.id}').value;
+                const url=document.getElementById('newNoteUrl-${t.id}').value;
+                if(!url.trim()){ alert('Paste a PDF link'); return; }
+                dirty(()=> addTopicNote('${s.id}','${t.id}', title, url));
+              })()">Add</button>
+            </div>
+            <div id="notesWrap-${t.id}" class="pastList" style="margin-top:8px"></div>
+          </details>
+        `;
+        card.appendChild(topic);
+
+        const chipsWrap=topic.querySelector(`#chips-${t.id}`);
+        for(let i=0;i<t.chunks;i++){
+          const chip=document.createElement("div"); chip.className="chip"+(t.completed[i]?' done':''); chip.textContent=i+1;
+          chip.title=t.completed[i]?"Completed — tap to undo":"Not done — tap to complete";
+          chip.onclick=()=> dirty(()=> toggleChunk(s.id,t.id,i));
+          chipsWrap.appendChild(chip);
+        }
+
+        const notesWrap = topic.querySelector(`#notesWrap-${t.id}`);
+        if(!t.notes || t.notes.length===0){
+          notesWrap.innerHTML = `<div class="small">No notes added yet.</div>`;
+        }else{
+          notesWrap.innerHTML = t.notes.map(n=>{
+            const emb = n.url ? makePdfEmbed(n.url) : "";
+            return `
+              <div class="noteItem">
+                <div class="noteHead">
+                  <div class="row" style="gap:8px">
+                    <input class="inline" value="${escapeHtml(n.title)}" id="title-${n.id}" placeholder="Title"/>
+                    <a class="link small" href="${escapeHtml(n.url)}" target="_blank" rel="noopener">${escapeHtml(n.url)}</a>
+                  </div>
+                  <div class="row">
+                    <button onclick="dirty(()=> updateTopicNote('${s.id}','${t.id}','${n.id}', document.getElementById('title-${n.id}').value, '${escapeHtml(n.url)}'))">Save</button>
+                    <a class="btn" href="${escapeHtml(n.url)}" target="_blank" rel="noopener">Open</a>
+                    <button class="danger" onclick="dirty(()=> removeTopicNote('${s.id}','${t.id}','${n.id}'))">Delete</button>
+                  </div>
+                </div>
+                ${n.url ? `<details><summary>Preview</summary><div class="pdfWrap" style="margin-top:6px"><iframe src="${emb}" allow="autoplay"></iframe></div></details>` : ``}
+              </div>
+            `;
+          }).join("");
+        }
+      }
+      const bulk=document.createElement("details"); bulk.id=`bulk-${s.id}`; bulk.style.marginTop="10px";
+      bulk.innerHTML=`<summary>Bulk add topics to <strong>${escapeHtml(s.name)}</strong></summary>
+        <div class="row" style="margin-top:8px">
+          <textarea id="bulktext-${s.id}" rows="6" style="width:100%;max-width:720px" placeholder="One per line. Format:
+Topic name | chunks
+Topic two | 5
+Only name (defaults to 1 chunk)"></textarea>
+        </div>
+        <div class="row" style="margin-top:8px"><button onclick="onBulkApply('${s.id}')">Add Topics</button>
+          <span class="small">Tip: Large lists are fine. Chunk count is capped at 500.</span></div>`;
+      card.appendChild(document.createElement("hr")).className="sep";
+      card.appendChild(bulk);
+    }
+    mount.appendChild(card);
+  }
+  requestAnimationFrame(()=>{
+    document.querySelectorAll("[data-subject-rename]").forEach(inp=>{
+      inp.onchange=(e)=> dirty(()=> renameSubject(inp.dataset.subjectRename, e.target.value.trim()||"Untitled"));
+    });
+    document.querySelectorAll("[data-topic-rename]").forEach(inp=>{
+      inp.onchange=(e)=>{ const [sid,tid]=inp.dataset.topicRename.split("::");
+        const ex=currentExam(); const s=ex.subjects.find(s=>s.id===sid); const t=s?.topics.find(t=>t.id===tid); if(!t) return;
+        dirty(()=>{ t.name=e.target.value.trim()||"Untitled topic"; });
+      };
+    });
+  });
+}
+
+function renderSyllabus(){
+  const ex=currentExam(); const url=ex.syllabusUrl||""; const embed=url?makePdfEmbed(url):"";
+  mount.innerHTML = `
+    <div class="card">
+      <h2>📄 Syllabus PDF</h2>
+      <div class="row">
+        <input id="syllabusInp" style="min-width:280px;flex:1" placeholder="Paste Google Drive share link (or any PDF URL)" value="${escapeHtml(url)}"/>
+        <button id="saveSyllabusBtn">Save</button>
+        ${url ? `<a class="btn" id="openSyllabus" target="_blank" rel="noopener">Open</a>
+                 <button class="danger" id="clearSyllabusBtn">Clear</button>` : ""}
+      </div>
+      ${url ? `<div class="pdfWrap"><iframe src="${embed}" allow="autoplay"></iframe></div>`
+            : `<div class="small" style="margin-top:8px">Tip: Set Drive file to “Anyone with the link – Viewer”.</div>`}
+    </div>
+  `;
+  $("#saveSyllabusBtn").onclick = ()=> { const val=$("#syllabusInp").value.trim(); dirty(()=> setSyllabusUrl(val||"")); };
+  const open=$("#openSyllabus"); if(open) open.href=url;
+  const clear=$("#clearSyllabusBtn"); if(clear) clear.onclick=()=> dirty(()=> setSyllabusUrl(""));
+}
+
+function renderNotifications(){
+  const ex=currentExam();
+  const cur = ex.notifications.currentUrl || "";
+  const embed = cur ? makePdfEmbed(cur) : "";
+  mount.innerHTML = `
+    <div class="card">
+      <h2>📣 Notifications PDF</h2>
+      <details open>
+        <summary><strong>Current Notification</strong></summary>
+        <div class="row" style="margin-top:8px">
+          <input id="notifCurInp" style="min-width:280px;flex:1" placeholder="Paste Google Drive share link (or any PDF URL)" value="${escapeHtml(cur)}"/>
+          <button id="saveCurNotifBtn">Save</button>
+          ${cur ? `<a class="btn" id="openCurNotif" target="_blank" rel="noopener">Open</a>
+                   <button id="archiveCurBtn">Archive → Past</button>
+                   <button class="danger" id="clearCurBtn">Clear</button>` : ""}
+        </div>
+        ${cur ? `<div class="pdfWrap"><iframe src="${embed}" allow="autoplay"></iframe></div>`
+              : `<div class="small" style="margin-top:8px">Tip: Ensure link is viewable.</div>`}
+      </details>
+
+      <details style="margin-top:10px" open>
+        <summary><strong>Past Notifications</strong></summary>
+        <div class="row" style="margin-top:8px">
+          <input id="notifPastInp" style="min-width:280px;flex:1" placeholder="Paste a past notification PDF link"/>
+          <button id="addPastBtn">Add to Past</button>
+        </div>
+        <div class="pastList" id="pastList"></div>
+      </details>
+    </div>
+  `;
+  $("#saveCurNotifBtn").onclick = ()=> { const val=$("#notifCurInp").value.trim(); dirty(()=> setCurrentNotif(val||"")); };
+  const openCur=$("#openCurNotif"); if(openCur) openCur.href=cur;
+  const clearCur=$("#clearCurBtn"); if(clearCur) clearCur.onclick=()=> dirty(()=> setCurrentNotif(""));
+  const archCur=$("#archiveCurBtn"); if(archCur) archCur.onclick=()=> dirty(()=> archiveCurrentToPast());
+  $("#addPastBtn").onclick = ()=> { const v=$("#notifPastInp").value.trim(); if(!v) return; dirty(()=> addPastNotif(v)); };
+  const list = $("#pastList");
+  if(ex.notifications.pastUrls.length===0){
+    list.innerHTML = `<div class="small">No past notifications yet.</div>`;
+  }else{
+    list.innerHTML = ex.notifications.pastUrls.map((url,idx)=>{
+      const emb = makePdfEmbed(url);
+      return `
+        <div class="pastItem">
+          <div class="pastHead">
+            <div class="row" style="gap:8px">
+              <span class="small">#${idx+1}</span>
+              <a class="link" href="${url}" target="_blank" rel="noopener">${escapeHtml(url)}</a>
+            </div>
+            <div class="row">
+              <button onclick="dirty(()=> makePastCurrent(${idx}))">Make Current</button>
+              <a class="btn" href="${url}" target="_blank" rel="noopener">Open</a>
+              <button class="danger" onclick="dirty(()=> removePastNotif(${idx}))">Delete</button>
+            </div>
+          </div>
+          <details>
+            <summary>Preview</summary>
+            <div class="pdfWrap" style="margin-top:8px"><iframe src="${emb}" allow="autoplay"></iframe></div>
+          </details>
+        </div>
+      `;
+    }).join("");
+  }
+}
+
+function renderCutoff(){
+  const ex=currentExam();
+  const cur = ex.cutoff.currentUrl || "";
+  const embed = cur ? makePdfEmbed(cur) : "";
+  mount.innerHTML = `
+    <div class="card">
+      <h2>🧾 Final Selection Cutoff PDF</h2>
+      <details open>
+        <summary><strong>Current Final Cutoff</strong></summary>
+        <div class="row" style="margin-top:8px">
+          <input id="cutCurInp" style="min-width:280px;flex:1" placeholder="Paste Google Drive share link (or any PDF URL)" value="${escapeHtml(cur)}"/>
+          <button id="saveCurCutBtn">Save</button>
+          ${cur ? `<a class="btn" id="openCurCut" target="_blank" rel="noopener">Open</a>
+                   <button id="archiveCurCutBtn">Archive → Past</button>
+                   <button class="danger" id="clearCurCutBtn">Clear</button>` : ""}
+        </div>
+        ${cur ? `<div class="pdfWrap"><iframe src="${embed}" allow="autoplay"></iframe></div>`
+              : `<div class="small" style="margin-top:8px">Tip: Set Drive link visibility to “Anyone with the link – Viewer”.</div>`}
+      </details>
+
+      <details style="margin-top:10px" open>
+        <summary><strong>Past Final Cutoffs</strong></summary>
+        <div class="row" style="margin-top:8px">
+          <input id="cutPastInp" style="min-width:280px;flex:1" placeholder="Paste a past cutoff PDF link"/>
+          <button id="addPastCutBtn">Add to Past</button>
+        </div>
+        <div class="pastList" id="cutPastList"></div>
+      </details>
+    </div>
+  `;
+  $("#saveCurCutBtn").onclick = ()=> { const val=$("#cutCurInp").value.trim(); dirty(()=> setCurrentCutoff(val||"")); };
+  const openCur=$("#openCurCut"); if(openCur) openCur.href=cur;
+  const clearCur=$("#clearCurCutBtn"); if(clearCur) clearCur.onclick=()=> dirty(()=> setCurrentCutoff(""));
+  const archCur=$("#archiveCurCutBtn"); if(archCur) archCur.onclick=()=> dirty(()=> archiveCurrentCutoffToPast());
+  $("#addPastCutBtn").onclick = ()=> { const v=$("#cutPastInp").value.trim(); if(!v) return; dirty(()=> addPastCutoff(v)); };
+  const list = $("#cutPastList");
+  if(ex.cutoff.pastUrls.length===0){
+    list.innerHTML = `<div class="small">No past cutoffs yet.</div>`;
+  }else{
+    list.innerHTML = ex.cutoff.pastUrls.map((url,idx)=>{
+      const emb = makePdfEmbed(url);
+      return `
+        <div class="pastItem">
+          <div class="pastHead">
+            <div class="row" style="gap:8px">
+              <span class="small">#${idx+1}</span>
+              <a class="link" href="${url}" target="_blank" rel="noopener">${escapeHtml(url)}</a>
+            </div>
+            <div class="row">
+              <button onclick="dirty(()=> makePastCutoffCurrent(${idx}))">Make Current</button>
+              <a class="btn" href="${url}" target="_blank" rel="noopener">Open</a>
+              <button class="danger" onclick="dirty(()=> removePastCutoff(${idx}))">Delete</button>
+            </div>
+          </div>
+          <details>
+            <summary>Preview</summary>
+            <div class="pdfWrap" style="margin-top:8px"><iframe src="${emb}" allow="autoplay"></iframe></div>
+          </details>
+        </div>
+      `;
+    }).join("");
+  }
+}
+
+function renderSelection(){
+  const ex=currentExam();
+  const req = ex.selection?.required ?? null;
+  const tot = ex.selection?.total ?? null;
+  const valid = Number.isFinite(req) && Number.isFinite(tot) && tot>0 && req>=0;
+  const pct = valid ? Math.min( (req/tot)*100, 9999 ) : null;
+  const pctText = valid ? `${pct.toFixed(2)}%` : "—";
+  const barPct = valid ? Math.max(0, Math.min(pct, 100)) : 0;
+
+  let msg = "";
+  if(valid && req>tot) msg = `<span class="warning">Note: required marks exceed total marks.</span>`;
+  if(valid && pct>100) msg = `<span class="warning">Note: ${pct.toFixed(2)}% is above 100% — check your numbers.</span>`;
+
+  mount.innerHTML = `
+    <div class="card">
+      <h2>🎯 Selection Marks</h2>
+      <div class="row" style="gap:12px">
+        <label class="small">Marks required</label>
+        <input id="selReq" type="number" min="0" step="0.5" value="${req??""}" placeholder="e.g., 180"/>
+        <label class="small">out of</label>
+        <input id="selTot" type="number" min="1" step="1" value="${tot??""}" placeholder="e.g., 300"/>
+        <button id="saveSelBtn">Save</button>
+        ${(req!=null||tot!=null)?`<button class="danger" id="clearSelBtn">Clear</button>`:""}
+      </div>
+
+      <div class="row" style="margin-top:10px;gap:12px">
+        <div class="bar" style="min-width:260px" title="Required percentage">
+          <div class="fill" style="width:${barPct}%"></div>
+        </div>
+        <span class="pctLabel">${valid?`${req} / ${tot} = ${pctText}`:'Enter values to calculate %'}</span>
+        ${msg?`<span class="small">${msg}</span>`:""}
+      </div>
+
+      <div class="small" style="margin-top:8px">
+        Tip: You can enter decimals (e.g., 181.5). We store these numbers for this exam only.
+      </div>
+    </div>
+  `;
+
+  $("#saveSelBtn").onclick = ()=>{
+    const r = $("#selReq").value.trim();
+    const t = $("#selTot").value.trim();
+    const rNum = r===""? null : Number(r);
+    const tNum = t===""? null : Number(t);
+    if(tNum!==null && (!Number.isFinite(tNum) || tNum<=0)) return alert("Total marks must be a positive number.");
+    if(rNum!==null && (!Number.isFinite(rNum) || rNum<0)) return alert("Required marks must be zero or more.");
+    dirty(()=> setSelection(rNum, tNum));
+  };
+  const clear=$("#clearSelBtn");
+  if(clear) clear.onclick = ()=> dirty(()=> clearSelection());
+}
+
+function renderResponse(){
+  const ex=currentExam();
+  const url = ex.responseUrl || "";
+  const embed = url ? makePdfEmbed(url) : "";
+  mount.innerHTML = `
+    <div class="card">
+      <h2>🧾 Response Sheet PDF</h2>
+      <div class="row">
+        <input id="respInp" style="min-width:280px;flex:1" placeholder="Paste Google Drive share link (or any PDF URL)" value="${escapeHtml(url)}"/>
+        <button id="saveRespBtn">Save</button>
+        ${url ? `<a class="btn" id="openResp" target="_blank" rel="noopener">Open</a>
+                 <button class="danger" id="clearRespBtn">Clear</button>` : ""}
+      </div>
+      ${url ? `<div class="pdfWrap"><iframe src="${embed}" allow="autoplay"></iframe></div>`
+            : `<div class="small" style="margin-top:8px">Tip: In Google Drive, set the file to “Anyone with the link – Viewer”, then paste the link above.</div>`}
+    </div>
+  `;
+  $("#saveRespBtn").onclick = ()=> { const val=$("#respInp").value.trim(); dirty(()=> setResponseUrl(val||"")); };
+  const open=$("#openResp"); if(open) open.href = url;
+  const clear=$("#clearRespBtn"); if(clear) clear.onclick = ()=> dirty(()=> setResponseUrl(""));
+}
+
+function renderQP(){
+  const ex=currentExam();
+  const qp = ex.questionPapers || { currentUrl:"", pastUrls:[] };
+  const cur = qp.currentUrl || "";
+  const embed = cur ? makePdfEmbed(cur) : "";
+  mount.innerHTML = `
+    <div class="card">
+      <h2>📝 Question Papers</h2>
+      <details open>
+        <summary><strong>Current Question Paper</strong></summary>
+        <div class="row" style="margin-top:8px">
+          <input id="qpCurInp" style="min-width:280px;flex:1" placeholder="Paste Google Drive share link (or any PDF URL)" value="${escapeHtml(cur)}"/>
+          <button id="saveCurQPBtn">Save</button>
+          ${cur ? `<a class="btn" id="openCurQP" target="_blank" rel="noopener">Open</a>
+                   <button id="archiveCurQPBtn">Archive → Past</button>
+                   <button class="danger" id="clearCurQPBtn">Clear</button>` : ""}
+        </div>
+        ${cur ? `<div class="pdfWrap"><iframe src="${embed}" allow="autoplay"></iframe></div>`
+              : `<div class="small" style="margin-top:8px">Tip: Ensure the link is viewable by “Anyone with the link”.</div>`}
+      </details>
+
+      <details style="margin-top:10px" open>
+        <summary><strong>Past Question Papers</strong></summary>
+        <div class="row" style="margin-top:8px">
+          <input id="qpPastInp" style="min-width:280px;flex:1" placeholder="Paste a past question paper PDF link"/>
+          <button id="addPastQPBtn">Add to Past</button>
+        </div>
+        <div class="pastList" id="qpPastList"></div>
+      </details>
+    </div>
+  `;
+  $("#saveCurQPBtn").onclick = ()=> { const v=$("#qpCurInp").value.trim(); dirty(()=> setCurrentQP(v||"")); };
+  const open=$("#openCurQP"); if(open) open.href = cur;
+  const clear=$("#clearCurQPBtn"); if(clear) clear.onclick = ()=> dirty(()=> setCurrentQP(""));
+  const arch=$("#archiveCurQPBtn"); if(arch) arch.onclick = ()=> dirty(()=> archiveCurrentQPToPast());
+  $("#addPastQPBtn").onclick = ()=> { const v=$("#qpPastInp").value.trim(); if(!v) return; dirty(()=> addPastQP(v)); };
+
+  const list = $("#qpPastList");
+  if(qp.pastUrls.length===0){
+    list.innerHTML = `<div class="small">No past question papers yet.</div>`;
+  }else{
+    list.innerHTML = qp.pastUrls.map((url,idx)=>{
+      const emb = makePdfEmbed(url);
+      return `
+        <div class="pastItem">
+          <div class="pastHead">
+            <div class="row" style="gap:8px">
+              <span class="small">#${idx+1}</span>
+              <a class="link" href="${url}" target="_blank" rel="noopener">${escapeHtml(url)}</a>
+            </div>
+            <div class="row">
+              <button onclick="dirty(()=> makePastQPCurrent(${idx}))">Make Current</button>
+              <a class="btn" href="${url}" target="_blank" rel="noopener">Open</a>
+              <button class="danger" onclick="dirty(()=> removePastQP(${idx}))">Delete</button>
+            </div>
+          </div>
+          <details>
+            <summary>Preview</summary>
+            <div class="pdfWrap" style="margin-top:8px"><iframe src="${emb}" allow="autoplay"></iframe></div>
+          </details>
+        </div>
+      `;
+    }).join("");
+  }
+}
+
+function render(){
+  normalize();
+  renderExamHeader();
+  renderOverview();
+  if(state.ui.tab==="syllabus") renderSyllabus();
+  else if(state.ui.tab==="notifications") renderNotifications();
+  else if(state.ui.tab==="cutoff") renderCutoff();
+  else if(state.ui.tab==="selection") renderSelection();
+  else if(state.ui.tab==="response") renderResponse();
+  else if(state.ui.tab==="qp") renderQP();
+  else renderSubjects();
+}
+
+/* ---------- inline UI helpers (unchanged) ---------- */
+function onAddTopic(subjectId){
+  const name=prompt("Topic name?"); if(name===null) return;
+  let chunks=prompt("How many chunks for this topic?","5"); if(chunks===null) return;
+  chunks=Math.floor(Number(chunks)); if(!Number.isFinite(chunks)||chunks<1) return alert("Enter a valid number (>=1)");
+  dirty(()=> addTopic(subjectId, name.trim()||"Untitled topic", chunks));
+}
+function onEditTopic(subjectId,topicId){
+  const ex=currentExam(); if(!ex) return;
+  const s=ex.subjects.find(s=>s.id===subjectId); const t=s?.topics.find(t=>t.id===topicId); if(!t) return;
+  const newName=prompt("Rename topic:", t.name); if(newName===null) return;
+  let newChunks=prompt("Change chunk count:", t.chunks); if(newChunks===null) return;
+  newChunks=Math.floor(Number(newChunks)); if(!Number.isFinite(newChunks)||newChunks<1) return alert("Enter a valid number (>=1)");
+  dirty(()=> editTopic(subjectId, topicId, newName.trim()||"Untitled topic", newChunks));
+}
+function onDeleteTopic(subjectId,topicId){ if(!confirm("Delete this topic? This cannot be undone.")) return; dirty(()=> removeTopic(subjectId,topicId)); }
+function onDeleteSubject(subjectId){ if(!confirm("Delete this subject and all its topics? This cannot be undone.")) return; dirty(()=> removeSubject(subjectId)); }
+function onBulkAdd(subjectId){
+  const det=document.getElementById(`bulk-${subjectId}`); if(det) det.open=true;
+  const ta=document.getElementById(`bulktext-${subjectId}`); if(ta && !ta.value.trim()){ ta.value="Topic 1 | 5\nTopic 2 | 8\nOnly name defaults to 1"; }
+}
+function onBulkApply(subjectId){
+  const ta=document.getElementById(`bulktext-${subjectId}`); if(!ta) return;
+  const lines=ta.value.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+  if(!lines.length){ alert("Nothing to add."); return; }
+  dirty(()=> { for(const line of lines){ const m=line.split("|"); const name=(m[0]||"Untitled topic").trim(); const chunks=m[1]?Math.floor(Number(m[1])):1; addTopic(subjectId, name, Number.isFinite(chunks)&&chunks>0?chunks:1); } });
+  ta.value=""; const det=document.getElementById(`bulk-${subjectId}`); if(det) det.open=false;
+}
+function onToggleSubject(subjectId){ dirty(()=> toggleSubject(subjectId)); }
+
+/* ---------- helpers (unchanged) ---------- */
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g, c=>({
+    "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
+  }[c]));
+}
+
+/* ---------- export / import (unchanged) ---------- */
+function onExport(){
+  const data=JSON.stringify(state, null, 2);
+  const blob=new Blob([data], {type:"application/json"});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement("a"); a.href=url; a.download="exams-progress-backup.json"; a.click();
+  URL.revokeObjectURL(url);
+}
+async function onImport(e){
+  const file=e.target.files?.[0]; if(!file) return;
+  try{
+    const text=await file.text();
+    state=JSON.parse(text);
+    normalize(); save(); render();
+  }catch(err){ alert("Import failed: " + err.message); }
+  finally{ e.target.value=""; }
+}
+$("#exportBtn").onclick = onExport;
+$("#importInp").onchange = onImport;
+$("#demoBtn").onclick = ()=>{
+  if(!confirm("Load demo data? This replaces your in-app data (export a backup first).")) return;
+  state = demoData(); save(); render();
+};
+
+/* ---------- demo (unchanged) ---------- */
+function demoData(){
+  const e1={ id:uid(), name:"RRB JE 2025", syllabusUrl:"", notifications:{ currentUrl:"", pastUrls:[] }, cutoff:{ currentUrl:"", pastUrls:[] }, selection:{ required:180, total:300 }, responseUrl:"", questionPapers:{ currentUrl:"", pastUrls:[] }, subjects:[
+    { id:uid(), name:"History", collapsed:false, topics:[
+      { id:uid(), name:"President of India", chunks:2, completed:[true,false], notes:[
+        {id:uid(), title:"Overview notes", url:""},
+      ] },
+      { id:uid(), name:"PM of India", chunks:3, completed:[false,false,false], notes:[] },
+      { id:uid(), name:"Organisation by Indian", chunks:5, completed:[false,false,false,false,false], notes:[] },
+    ]},
+    { id:uid(), name:"Physics", collapsed:true, topics:[] }
+  ]};
+  const e2={ id:uid(), name:"SSC JE 2025", syllabusUrl:"", notifications:{ currentUrl:"", pastUrls:[] }, cutoff:{ currentUrl:"", pastUrls:[] }, selection:{ required:null, total:null }, responseUrl:"", questionPapers:{ currentUrl:"", pastUrls:[] }, subjects:[
+    { id:uid(), name:"Strength of Materials", collapsed:false, topics:[
+      { id:uid(), name:"Bending Stresses", chunks:6, completed:[true,true,true,false,false,false], notes:[] }
+    ]}
+  ]};
+  return { exams:[e1,e2], currentExamId:e1.id, ui:{tab:"subjects"} };
+}
+
+/* =================== BOOT: instant pull on open/new device =================== */
+async function boot(){
+  try{
+    // 1) Try to pull remote → local Pouch first (fresh device/cleared storage)
+    await triggerPull("first-boot");
+
+    // 2) Load state from Pouch if it exists; otherwise keep whatever is in localStorage
+    const remoteState = await loadFromPouch();
+    if(remoteState){
+      state = remoteState;
+      saveLS(state); // mirror to localStorage for your existing flow
+    }else{
+      // No remote doc yet: if localStorage has data, we'll push it after render
+      const ls = loadLS();
+      if(ls){ state = ls; }
+    }
+
+    hasPulledOnce = true;
+    startLive();
+  }catch(e){
+    // offline: fall back to localStorage; we'll auto-sync when online
+    const ls = loadLS();
+    if(ls) state = ls;
+    window.addEventListener("online", async function onl(){
+      try{
+        await triggerPull("came-online");
+        startLive();
+        await triggerPush("after-online");
+        window.removeEventListener("online", onl);
+      }catch{}
+    });
+  }finally{
+    normalize();
+    render();
+    // If there was no remote state but we have local data, create+push now
+    putStateToPouch(state).then(()=>triggerPush("post-init")).catch(()=>{});
+  }
+}
+
+// Flush any pending edits when tab hides (quick push)
+document.addEventListener("visibilitychange", ()=>{
+  if(document.hidden) triggerPush("tab-hidden");
+});
+
+// Start
+boot();
+</script>
+</body>
+</html>
