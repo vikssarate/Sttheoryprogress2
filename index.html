@@ -115,9 +115,9 @@ function uid(){ return Math.random().toString(36).slice(2) + Date.now().toString
 function loadLS(){ try{ return JSON.parse(localStorage.getItem(LSK)); }catch(e){ return null; } }
 function saveLS(obj){ localStorage.setItem(LSK, JSON.stringify(obj)); }
 
-/* =================== NEW: PouchDB/CouchDB wiring =================== */
+/* =================== PouchDB/CouchDB wiring (AUTO SYNC) =================== */
 const POUCH_LOCAL_NAME = "sttheoryprogress1_local_v1";
-const POUCH_DOC_ID     = "exams_state_v1";            // single state doc
+const POUCH_DOC_ID     = "exams_state_v1";            // canonical state doc id
 const REMOTE_URL       = "https://couch.techstudy.me/sttheoryprogress1";
 
 const pdbLocal  = new PouchDB(POUCH_LOCAL_NAME);
@@ -127,33 +127,36 @@ let pouchRev = null;                // latest _rev of our state doc
 let hasPulledOnce = false;
 let liveSync = null;
 let pushInFlight = false, pushQueued = false;
-let isApplyingRemote = false;       // avoid loops when we apply remote→local
 
-async function loadFromPouch(){
+// Accept these ids if the remote already has a legacy name
+const FALLBACK_DOC_IDS = [POUCH_DOC_ID, "exams_state", "state"];
+
+/* ---- helpers to read/write state in Pouch ---- */
+async function loadFromPouchById(id){
   try{
-    const doc = await pdbLocal.get(POUCH_DOC_ID);
+    const doc = await pdbLocal.get(id);
     pouchRev = doc._rev;
-    return doc.state || null;
+    return { id, state: doc.state || null };
   }catch(e){
     if(e.status===404) return null;
     throw e;
   }
 }
-
-async function putStateToPouch(newState){
+async function loadFromPouch(){
+  for(const id of FALLBACK_DOC_IDS){
+    const r = await loadFromPouchById(id);
+    if(r) return r;
+  }
+  return null;
+}
+async function putStateToPouch(newState, id=POUCH_DOC_ID){
   // conflict-safe put with retries
   for(let i=0;i<4;i++){
     try{
       let base = {};
-      try{ base = await pdbLocal.get(POUCH_DOC_ID); }
+      try{ base = await pdbLocal.get(id); }
       catch(e){ if(e.status!==404) throw e; }
-      const doc = {
-        _id: POUCH_DOC_ID,
-        _rev: base._rev,
-        type: "appState",
-        updatedAt: Date.now(),
-        state: newState
-      };
+      const doc = { _id:id, _rev:base._rev, type:"appState", updatedAt:Date.now(), state:newState };
       const res = await pdbLocal.put(doc);
       pouchRev = res.rev;
       return res;
@@ -165,54 +168,63 @@ async function putStateToPouch(newState){
   throw new Error("conflict loop on putStateToPouch");
 }
 
-async function triggerPush(reason){
+/* ---- push / pull ---- */
+async function triggerPush(_reason){
   if(pushInFlight){ pushQueued = true; return; }
   pushInFlight = true;
   try{
     await pdbLocal.replicate.to(pdbRemote, { batch_size:200 });
   }catch(e){
-    // swallow; next online will retry
+    // offline or CORS: ignore; next change/online will retry
   }finally{
     pushInFlight = false;
     if(pushQueued){ pushQueued = false; triggerPush("queued"); }
   }
 }
-
-async function triggerPull(reason){
+async function triggerPull(_reason){
   await PouchDB.replicate(pdbRemote, pdbLocal, { batch_size:200 });
   hasPulledOnce = true;
 }
 
-/* Live sync (kept silent; UI unchanged) */
+/* ---- live sync ---- */
 function startLive(){
   if(liveSync) return;
   liveSync = pdbLocal.sync(pdbRemote, { live:true, retry:true })
-    .on("error", ()=>{/*noop*/});
+    .on("error", ()=>{/* silent */});
 }
 function stopLive(){ if(liveSync){ liveSync.cancel(); liveSync=null; } }
 
-/* Apply remote changes immediately to in-memory state + localStorage */
-pdbLocal.changes({ since:"now", live:true, include_docs:true, doc_ids:[POUCH_DOC_ID] })
+/* ---- apply remote changes instantly to in-memory + localStorage ---- */
+pdbLocal.changes({ since:"now", live:true, include_docs:true, doc_ids:FALLBACK_DOC_IDS })
   .on("change", ch=>{
-    if(!ch.doc) return;
-    // If we are the writer, still reflect the state (safe).
-    isApplyingRemote = true;
-    try{
-      const remoteState = ch.doc.state || {};
-      state = remoteState;
-      saveLS(state);
-      savedPulse();
-      render();
-    }finally{
-      isApplyingRemote = false;
-    }
+    if(!ch.doc || !ch.doc.state) return;
+    state = ch.doc.state;
+    saveLS(state);
+    savedPulse();
+    render();
   });
+
+/* ---- fast-path: try direct GET from remote (works on fresh device) ---- */
+async function tryGetRemoteStateDirect(){
+  for(const id of FALLBACK_DOC_IDS){
+    try{
+      const r = await pdbRemote.get(id);
+      if(r && r.state) return { id, state:r.state };
+    }catch(e){ /* 404/403 -> next id */ }
+  }
+  return null;
+}
+/* ---- call once when we come online ---- */
+function whenOnlineOnce(fn){
+  function handler(){ window.removeEventListener("online", handler); fn(); }
+  window.addEventListener("online", handler);
+}
 
 /* =================== app state (unchanged APIs) =================== */
 let state = loadLS() ?? {};
 let saveTimer;
 
-/* ---------- persistence (UPDATED to also sync PouchDB) ---------- */
+/* ---------- persistence (unchanged API + instant push) ---------- */
 function savedPulse(){
   savedBadge.textContent="Saved";
   savedBadge.style.opacity=1;
@@ -220,14 +232,13 @@ function savedPulse(){
   saveTimer=setTimeout(()=>{ savedBadge.style.opacity=.4; },1200);
 }
 function save(){
-  // 1) localStorage (unchanged)
+  // 1) localStorage (for offline UI)
   saveLS(state);
   savedPulse();
-
-  // 2) PouchDB (instant push)
+  // 2) Pouch (conflict-safe) + push immediately
   putStateToPouch(state)
     .then(()=> { if(hasPulledOnce || liveSync) triggerPush("local-change"); })
-    .catch(()=>{/* ignore; next edit/online will retry */});
+    .catch(()=>{/* ignore */});
 }
 function dirty(fn){
   if(fn) fn();
@@ -287,7 +298,7 @@ function normalize(){
         cutoff:{currentUrl:"", pastUrls:[]},
         selection:{ required:null, total:null },
         responseUrl:"",
-        questionPapers:{ currentUrl:"", pastUrls:[] },
+        questionPapers:{currentUrl:"", pastUrls:[] },
         subjects: state.subjects
       }],
       currentExamId: examId,
@@ -778,7 +789,7 @@ function renderCutoff(){
           </div>
           <details>
             <summary>Preview</summary>
-            <div class="pdfWrap" style="margin-top:8px"><iframe src="${emb}" allow="autoplay"></iframe></div>
+            <div class="pdfWrap" style="margin-top:8px"><iframe src="${emb}") allow="autoplay"></iframe></div>
           </details>
         </div>
       `;
@@ -1020,42 +1031,76 @@ function demoData(){
   return { exams:[e1,e2], currentExamId:e1.id, ui:{tab:"subjects"} };
 }
 
-/* =================== BOOT: instant pull on open/new device =================== */
+/* =================== BOOT: hardened pull for fresh device/cleared data =================== */
 async function boot(){
-  try{
-    // 1) Try to pull remote → local Pouch first (fresh device/cleared storage)
-    await triggerPull("first-boot");
+  const hadLocalLS = !!loadLS();
 
-    // 2) Load state from Pouch if it exists; otherwise keep whatever is in localStorage
-    const remoteState = await loadFromPouch();
-    if(remoteState){
-      state = remoteState;
-      saveLS(state); // mirror to localStorage for your existing flow
-    }else{
-      // No remote doc yet: if localStorage has data, we'll push it after render
-      const ls = loadLS();
-      if(ls){ state = ls; }
+  try{
+    // 1) Fast path: hit remote directly for state doc(s)
+    const direct = await tryGetRemoteStateDirect();
+    if(direct){
+      state = direct.state;
+      saveLS(state);
+      await putStateToPouch(state, POUCH_DOC_ID); // ensure canonical id locally
+      startLive();
+      hasPulledOnce = true;
+      normalize(); render();
+      return;
     }
 
-    hasPulledOnce = true;
+    // 2) Fallback: replicate remote → local, then read
+    await triggerPull("first-boot");
+    const fromPouch = await loadFromPouch();
+    if(fromPouch && fromPouch.state){
+      state = fromPouch.state;
+      saveLS(state);
+      startLive();
+      normalize(); render();
+      return;
+    }
+
+    // 3) Nothing on remote: ONLY seed remote if you had local data
+    if(hadLocalLS){
+      state = loadLS() || state;
+      await putStateToPouch(state, POUCH_DOC_ID);
+      startLive();
+      await triggerPush("seed-remote-from-local");
+      normalize(); render();
+      return;
+    }
+
+    // 4) Truly first run: render blank and listen for online to pull
     startLive();
-  }catch(e){
-    // offline: fall back to localStorage; we'll auto-sync when online
-    const ls = loadLS();
-    if(ls) state = ls;
-    window.addEventListener("online", async function onl(){
+    normalize(); render();
+    whenOnlineOnce(async ()=>{
       try{
         await triggerPull("came-online");
-        startLive();
-        await triggerPush("after-online");
-        window.removeEventListener("online", onl);
+        const again = await loadFromPouch();
+        if(again && again.state){
+          state = again.state;
+          saveLS(state);
+          render();
+        }
       }catch{}
     });
-  }finally{
-    normalize();
-    render();
-    // If there was no remote state but we have local data, create+push now
-    putStateToPouch(state).then(()=>triggerPush("post-init")).catch(()=>{});
+
+  }catch(e){
+    // Offline/CORS: render whatever we have, then sync once online
+    state = loadLS() || state;
+    normalize(); render();
+    whenOnlineOnce(async ()=>{
+      try{
+        await triggerPull("came-online");
+        const again = await loadFromPouch();
+        if(again && again.state){
+          state = again.state;
+          saveLS(state);
+          render();
+        }
+        startLive();
+        await triggerPush("after-online");
+      }catch{}
+    });
   }
 }
 
